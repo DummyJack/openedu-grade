@@ -131,6 +131,69 @@ grade_columns = [
 all_grades_data = []
 error_data = []
 
+
+def save_openedu_grades_score(results_df, grade_columns, choice):
+    """選項 2／3：與現有 openedu_grades_score.xlsx 合併，只更新／新增本次結果中的帳戶，其餘列保留。"""
+    excel_path = "./scores/openedu_grades_score.xlsx"
+    if not os.path.exists("./scores"):
+        os.makedirs("./scores")
+
+    if results_df.empty:
+        return
+
+    if not os.path.exists(excel_path):
+        results_df.to_excel(excel_path, index=False)
+        print(
+            f"\n✅ 成功建立新檔案並儲存 {len(results_df)} 筆成績資料到 openedu_grades_score.xlsx"
+        )
+        return
+
+    try:
+        existing_df = pd.read_excel(excel_path)
+    except Exception as e:
+        print(f"⚠️ 讀取現有檔案失敗，將直接覆蓋: {e}")
+        results_df.to_excel(excel_path, index=False)
+        print(
+            f"\n✅ 成功儲存 {len(results_df)} 筆成績資料到 openedu_grades_score.xlsx"
+        )
+        return
+
+    if "帳戶名稱" not in existing_df.columns:
+        results_df.to_excel(excel_path, index=False)
+        print(
+            f"\n✅ 現有檔缺少「帳戶名稱」欄位，已覆蓋寫入 {len(results_df)} 筆"
+        )
+        return
+
+    new_set = set(
+        results_df["帳戶名稱"].dropna().astype(str).str.strip().tolist()
+    )
+    existing_key = existing_df["帳戶名稱"].fillna("").astype(str).str.strip()
+    existing_accounts = existing_key.tolist()
+    new_list = list(new_set)
+    updated_accounts = [a for a in new_list if a in existing_accounts]
+    new_accounts = [a for a in new_list if a not in existing_accounts]
+
+    all_cols = list(dict.fromkeys(list(existing_df.columns) + list(grade_columns)))
+    existing_aligned = existing_df.reindex(columns=all_cols)
+    results_aligned = results_df.reindex(columns=all_cols)
+
+    combined_df = pd.concat(
+        [existing_aligned[~existing_key.isin(new_set)], results_aligned],
+        ignore_index=True,
+    )
+    combined_df.to_excel(excel_path, index=False)
+
+    print(
+        f"\n✅ 成功處理 {len(results_df)} 個帳戶的成績資料（已合併至檔案，其餘帳戶列保留）"
+    )
+    if choice == "2":
+        if updated_accounts:
+            print(f"   🔄 更新的帳戶: {updated_accounts}")
+        if new_accounts:
+            print(f"   ➕ 新增的帳戶: {new_accounts}")
+
+
 # 對帳戶進行處理
 test_accounts = None
 choice = None  # 全域變數，用於追蹤使用者選擇
@@ -232,8 +295,6 @@ for idx, account in enumerate(test_accounts, 1):
 
     # 錯誤重試機制：先標準策略，失敗後激進策略
     max_account_retries = 3
-    max_driver_rebuilds_per_account = 1
-    driver_rebuild_count = 0
     account_success = False
 
     for attempt in range(max_account_retries):
@@ -439,48 +500,18 @@ for idx, account in enumerate(test_accounts, 1):
             all_grades_data.append(account_grades)
             print(f"  ✅ 帳戶 {account} 處理完成")
 
-            # 儲存成功的成績資料
+            # 儲存成功的成績資料：選項 1 整檔覆寫；選項 2／3 與現有檔合併
             if all_grades_data:
                 results_df = pd.DataFrame(all_grades_data, columns=grade_columns)
-                
-                # 根據選擇模式決定儲存方式
-                if choice == "2":  # 指定特定帳戶模式 - 追加到現有檔案
-                    excel_path = "./scores/openedu_grades_score.xlsx"
-                    if os.path.exists(excel_path):
-                        # 讀取現有檔案
-                        try:
-                            existing_df = pd.read_excel(excel_path)
-                            
-                            # 區分新增和更新的帳戶
-                            existing_accounts = existing_df['帳戶名稱'].tolist()
-                            new_accounts_list = results_df['帳戶名稱'].tolist()
-                            
-                            updated_accounts = [acc for acc in new_accounts_list if acc in existing_accounts]
-                            new_accounts = [acc for acc in new_accounts_list if acc not in existing_accounts]
-                            
-                            # 移除重複的帳戶（直接覆蓋重複資料）
-                            existing_df = existing_df[~existing_df['帳戶名稱'].isin(results_df['帳戶名稱'])]
-                            # 合併資料（新資料會覆蓋舊資料）
-                            combined_df = pd.concat([existing_df, results_df], ignore_index=True)
-                            combined_df.to_excel(excel_path, index=False)
-                            
-                            # 顯示詳細的操作結果
-                            print(f"\n✅ 成功處理 {len(results_df)} 個帳戶的成績資料")
-                            if updated_accounts:
-                                print(f"   🔄 更新的帳戶: {updated_accounts}")
-                            if new_accounts:
-                                print(f"   ➕ 新增的帳戶: {new_accounts}")
-                        except Exception as e:
-                            print(f"⚠️ 讀取現有檔案失敗，將直接覆蓋: {e}")
-                            results_df.to_excel(excel_path, index=False)
-                            print(f"\n✅ 成功儲存 {len(all_grades_data)} 筆成績資料到 openedu_grades_score.xlsx")
-                    else:
-                        # 檔案不存在，直接建立新檔案
-                        results_df.to_excel(excel_path, index=False)
-                        print(f"\n✅ 成功建立新檔案並儲存 {len(all_grades_data)} 筆成績資料到 openedu_grades_score.xlsx")
-                else:  # 處理全部帳戶模式 - 直接覆蓋
-                    results_df.to_excel("./scores/openedu_grades_score.xlsx", index=False)
-                    print(f"\n✅ 成功儲存 {len(all_grades_data)} 筆成績資料到 openedu_grades_score.xlsx")
+                if choice == "1":
+                    results_df.to_excel(
+                        "./scores/openedu_grades_score.xlsx", index=False
+                    )
+                    print(
+                        f"\n✅ 成功儲存 {len(all_grades_data)} 筆成績資料到 openedu_grades_score.xlsx"
+                    )
+                else:
+                    save_openedu_grades_score(results_df, grade_columns, choice)
                     
             account_success = True
             break  # 成功後跳出重試迴圈
@@ -495,19 +526,6 @@ for idx, account in enumerate(test_accounts, 1):
                 match = re.search(r"Message:\s*(.+?)(?:\n|$)", error_message, re.DOTALL)
                 if match:
                     error_message = match.group(1).strip()
-
-            # 若分頁 context 失效，立即重建 driver 並重新登入後再重試
-            if "Not attached to an active page" in error_message:
-                if driver_rebuild_count < max_driver_rebuilds_per_account:
-                    print("    ⚠️ 偵測到頁面失效，嘗試自動重建瀏覽器與重新登入...")
-                    try:
-                        driver = recreate_driver_with_login(driver)
-                        driver_rebuild_count += 1
-                        print("    ✅ 已完成自動重建，準備重試當前帳戶")
-                    except Exception as rebuild_error:
-                        print(f"    ❌ 自動重建失敗: {rebuild_error}")
-                else:
-                    print("    ⚠️ 此帳戶已達 driver 重建上限（1 次），將不再重建")
 
             print(
                 f"  ❌ 嘗試 {attempt + 1}/{max_account_retries} 處理帳戶 {account} 時發生錯誤: {error_message}"
